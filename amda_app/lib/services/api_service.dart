@@ -16,8 +16,9 @@ class ApiService {
 
   Future<List<MaintenanceOrder>> getOrders() async {
     try {
+      final base = await AppConfig.serverUrl;
       final res = await http.get(
-        Uri.parse('${AppConfig.serverUrl}/mobile/orders'),
+        Uri.parse('$base/mobile/orders'),
         headers: _headers,
       );
       if (res.statusCode == 200) {
@@ -36,8 +37,9 @@ class ApiService {
 
   Future<Map<String, dynamic>> getOrderDetail(String orderId) async {
     try {
+      final base = await AppConfig.serverUrl;
       final res = await http.get(
-        Uri.parse('${AppConfig.serverUrl}/mobile/orders/$orderId'),
+        Uri.parse('$base/mobile/orders/$orderId'),
         headers: _headers,
       );
       if (res.statusCode == 200) {
@@ -51,8 +53,9 @@ class ApiService {
 
   Future<Map<String, dynamic>> closeOrder(String orderId) async {
     try {
+      final base = await AppConfig.serverUrl;
       final res = await http.post(
-        Uri.parse('${AppConfig.serverUrl}/mobile/orders/$orderId/close'),
+        Uri.parse('$base/mobile/orders/$orderId/close'),
         headers: _headers,
       );
       return jsonDecode(res.body);
@@ -63,8 +66,9 @@ class ApiService {
 
   Future<Map<String, dynamic>> getProfile() async {
     try {
+      final base = await AppConfig.serverUrl;
       final res = await http.get(
-        Uri.parse('${AppConfig.serverUrl}/mobile/profile'),
+        Uri.parse('$base/mobile/profile'),
         headers: _headers,
       );
       if (res.statusCode == 200) {
@@ -78,8 +82,9 @@ class ApiService {
 
   Future<Map<String, dynamic>> getMachines() async {
     try {
+      final base = await AppConfig.serverUrl;
       final res = await http.get(
-        Uri.parse('${AppConfig.serverUrl}/mobile/machines'),
+        Uri.parse('$base/mobile/machines'),
         headers: _headers,
       );
       if (res.statusCode == 200) {

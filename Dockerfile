@@ -10,4 +10,4 @@ COPY . .
 ENV AMDA_FLASK_HOST=0.0.0.0
 ENV AMDA_FLASK_PORT=8080
 
-CMD ["gunicorn", "-k", "eventlet", "-w", "1", "-b", "0.0.0.0:8080", "backend.wsgi:application"]
+CMD ["gunicorn", "-k", "gthread", "-w", "1", "--threads", "10", "-b", "0.0.0.0:8080", "backend.wsgi:application"]

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as socket_io;
 import '../config.dart';
+import '../models/alert.dart';
 import '../models/maintenance_order.dart';
 
 class SocketService {
@@ -10,17 +11,21 @@ class SocketService {
       StreamController<MaintenanceOrder>.broadcast();
   final StreamController<String> _orderRemovedController =
       StreamController<String>.broadcast();
+  final StreamController<Alert> _alertController =
+      StreamController<Alert>.broadcast();
 
   Stream<MaintenanceOrder> get orderStream => _orderController.stream;
   Stream<String> get orderRemovedStream => _orderRemovedController.stream;
+  Stream<Alert> get alertStream => _alertController.stream;
 
   bool get isConnected => _socket?.connected ?? false;
 
-  void connect({String? role}) {
+  Future<void> connect({String? role}) async {
     if (_socket != null && _socket!.connected) return;
 
+    final url = await AppConfig.socketUrl;
     _socket = socket_io.io(
-      AppConfig.socketUrl,
+      url,
       {
         'transports': ['websocket'],
         'autoConnect': true,
@@ -51,6 +56,12 @@ class SocketService {
       }
     });
 
+    _socket!.on('alert', (data) {
+      if (data is Map<String, dynamic>) {
+        _alertController.add(Alert.fromJson(data));
+      }
+    });
+
     _socket!.connect();
   }
 
@@ -63,5 +74,6 @@ class SocketService {
     disconnect();
     _orderController.close();
     _orderRemovedController.close();
+    _alertController.close();
   }
 }

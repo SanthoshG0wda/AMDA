@@ -1,0 +1,10 @@
+warning: `VIRTUAL_ENV=/home/santhosh/AMDA/.venv` does not match the project environment path `/home/santhosh/projects/AMDA/.venv` and will be ignored; use `--active` to target the active environment instead
+/home/santhosh/projects/AMDA/backend/server.py:1: EventletDeprecationWarning: 
+Eventlet is deprecated. It is currently being maintained in bugfix mode, and
+we strongly recommend against using it for new projects.
+
+If you are already using Eventlet, we recommend migrating to a different
+framework.  For more detail see
+https://eventlet.readthedocs.io/en/latest/asyncio/migration.html
+
+  import eventlet

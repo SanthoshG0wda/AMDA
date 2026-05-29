@@ -40,7 +40,7 @@ class AuthService {
   Future<Map<String, dynamic>> login(
       String username, String password) async {
     try {
-      final url = Uri.parse('${AppConfig.serverUrl}/auth/login');
+      final url = Uri.parse('${await AppConfig.serverUrl}/auth/login');
       debugPrint('AuthService: POST $url');
       final res = await http.post(
         url,
@@ -57,7 +57,8 @@ class AuthService {
       return data;
     } catch (e) {
       debugPrint('AuthService.login error: $e');
-      return {'ok': false, 'error': 'Cannot reach server at ${AppConfig.serverUrl}'};
+      final serverUrl = await AppConfig.serverUrl;
+      return {'ok': false, 'error': 'Cannot reach server at $serverUrl'};
     }
   }
 
@@ -68,7 +69,7 @@ class AuthService {
     required String role,
   }) async {
     try {
-      final url = Uri.parse('${AppConfig.serverUrl}/auth/signup');
+      final url = Uri.parse('${await AppConfig.serverUrl}/auth/signup');
       debugPrint('AuthService: POST $url');
       final res = await http.post(
         url,

@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../models/alert.dart';
 import '../models/maintenance_order.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import '../widgets/order_card.dart';
+import 'alerts_screen.dart';
 import 'login_screen.dart';
 import 'order_detail_screen.dart';
 import 'profile_screen.dart';
@@ -23,10 +25,12 @@ class _HomeScreenState extends State<HomeScreen> {
   late ApiService _api;
   late SocketService _socket;
   List<MaintenanceOrder> _orders = [];
+  List<Alert> _alerts = [];
   bool _loading = true;
   int _selectedIndex = 0;
   StreamSubscription<MaintenanceOrder>? _orderSub;
   StreamSubscription<String>? _removeSub;
+  StreamSubscription<Alert>? _alertSub;
 
   User? get _user => widget.authService.currentUser;
   String get _role => _user?.role ?? 'technician';
@@ -41,7 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _initSocket() {
-    _socket.connect(role: _role);
+    unawaited(_socket.connect(role: _role));
 
     _orderSub = _socket.orderStream.listen((order) {
       if (!mounted) return;
@@ -60,6 +64,14 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _orders.removeWhere((o) => o.id == orderId);
+      });
+    });
+
+    _alertSub = _socket.alertStream.listen((alert) {
+      if (!mounted) return;
+      setState(() {
+        _alerts.insert(0, alert);
+        if (_alerts.length > 100) _alerts = _alerts.take(100).toList();
       });
     });
   }
@@ -91,6 +103,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _orderSub?.cancel();
     _removeSub?.cancel();
+    _alertSub?.cancel();
     _socket.dispose();
     super.dispose();
   }
@@ -101,6 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final pages = [
       _buildOrdersPage(theme),
+      AlertsScreen(alerts: _alerts),
       ProfileScreen(
         user: _user,
         onLogout: _logout,
@@ -153,6 +167,15 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             selectedIcon: const Icon(Icons.assignment),
             label: 'Orders',
+          ),
+          NavigationDestination(
+            icon: Badge(
+              isLabelVisible: _alerts.isNotEmpty,
+              label: Text('${_alerts.length}'),
+              child: const Icon(Icons.notifications_outlined),
+            ),
+            selectedIcon: const Icon(Icons.notifications),
+            label: 'Alerts',
           ),
           const NavigationDestination(
             icon: Icon(Icons.person_outline),

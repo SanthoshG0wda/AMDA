@@ -1,13 +1,13 @@
-import eventlet
-eventlet.monkey_patch()
-
+import hashlib
 import json
 import logging
+import secrets
 import smtplib
 import time
 import threading
 from dataclasses import dataclass
 from email.message import EmailMessage
+from functools import wraps
 from typing import Any, Dict, Optional
 
 import joblib
@@ -34,7 +34,7 @@ CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False,
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization"])
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 mongo_available = False
 orders_coll = None
@@ -106,6 +106,7 @@ def mongo_find_one(coll, query):
 
 latest_by_machine: Dict[str, Dict[str, Any]] = {}
 alerts = []
+_alert_counter: int = 0
 maintenance_orders = []
 maintenance_schedules = []
 maintenance_history = []
@@ -435,8 +436,10 @@ def should_emit_alert(machine_id: str, failure: str) -> bool:
 
 
 def build_alert(machine_id: str, reason: str, reading: Dict[str, Any]) -> Dict[str, Any]:
+    global _alert_counter
+    _alert_counter += 1
     return {
-        'id': f'ALERT-{int(time.time() * 1000)}',
+        'id': f'ALERT-{int(time.time() * 1000)}-{_alert_counter}',
         'machine_id': machine_id, 'reason': reason, 'reading': reading,
         'triggered_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
     }
@@ -795,6 +798,191 @@ def on_disconnect():
     print('❌ Frontend disconnected')
 
 
+# ---------------------------------------------------------------------------
+# Mobile Auth — simple token-based auth (no external deps)
+# ---------------------------------------------------------------------------
+_users: Dict[str, dict] = {}
+_tokens: Dict[str, str] = {}  # token -> user_id
+USERS_COLL = None
+
+if mongo_available:
+    USERS_COLL = db["users"]
+    USERS_COLL.create_index("username", unique=True)
+
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def _make_token() -> str:
+    return secrets.token_hex(32)
+
+
+def _save_user(user: dict):
+    _users[user["id"]] = user
+    if USERS_COLL is not None:
+        mongo_save(USERS_COLL, user)
+
+
+def _find_user_by_username(username: str) -> Optional[dict]:
+    for u in _users.values():
+        if u["username"] == username:
+            return u
+    if USERS_COLL is not None:
+        doc = mongo_find_one(USERS_COLL, {"username": username})
+        if doc:
+            _users[doc["id"]] = doc
+            return doc
+    return None
+
+
+def _find_user_by_id(uid: str) -> Optional[dict]:
+    if uid in _users:
+        return _users[uid]
+    if USERS_COLL is not None:
+        doc = mongo_find_one(USERS_COLL, {"id": uid})
+        if doc:
+            _users[uid] = doc
+            return doc
+    return None
+
+
+def _resolve_user_from_header() -> Optional[dict]:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    token = auth[7:]
+    uid = _tokens.get(token)
+    if not uid:
+        return None
+    return _find_user_by_id(uid)
+
+
+def require_auth(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        user = _resolve_user_from_header()
+        if not user:
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        return f(user=user, *args, **kwargs)
+    return wrapper
+
+
+@app.route("/auth/signup", methods=["POST"])
+def auth_signup():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password", "")
+    full_name = (data.get("full_name") or "").strip()
+    role = (data.get("role") or "technician").strip().lower()
+    valid_roles = {"electrician", "mechanic", "technician", "engineer", "admin"}
+    if not username or len(username) < 3:
+        return jsonify({"ok": False, "error": "Username must be at least 3 characters"}), 400
+    if len(password) < 6:
+        return jsonify({"ok": False, "error": "Password must be at least 6 characters"}), 400
+    if role not in valid_roles:
+        return jsonify({"ok": False, "error": f"Invalid role: {role}"}), 400
+    if _find_user_by_username(username):
+        return jsonify({"ok": False, "error": "Username already taken"}), 409
+    uid = f"U-{int(time.time() * 1000)}-{secrets.token_hex(4)}"
+    user = {
+        "id": uid, "username": username,
+        "password": _hash_password(password),
+        "full_name": full_name, "role": role,
+    }
+    _save_user(user)
+    token = _make_token()
+    _tokens[token] = uid
+    return jsonify({
+        "ok": True, "token": token,
+        "user": {k: v for k, v in user.items() if k != "password"},
+    }), 201
+
+
+@app.route("/auth/login", methods=["POST"])
+def auth_login():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password", "")
+    user = _find_user_by_username(username)
+    if not user or user.get("password") != _hash_password(password):
+        return jsonify({"ok": False, "error": "Invalid username or password"}), 401
+    token = _make_token()
+    _tokens[token] = user["id"]
+    return jsonify({
+        "ok": True, "token": token,
+        "user": {k: v for k, v in user.items() if k != "password"},
+    })
+
+
+# ---------------------------------------------------------------------------
+# Mobile API endpoints
+# ---------------------------------------------------------------------------
+@app.get("/mobile/profile")
+@require_auth
+def mobile_profile(user):
+    return jsonify({"ok": True, "user": {k: v for k, v in user.items() if k != "password"}})
+
+
+@app.get("/mobile/machines")
+@require_auth
+def mobile_machines(user):
+    return jsonify({"ok": True, "machines": list(latest_by_machine.values())})
+
+
+@app.get("/mobile/orders")
+@require_auth
+def mobile_orders(user):
+    return jsonify({"ok": True, "orders": maintenance_orders})
+
+
+@app.get("/mobile/orders/<order_id>")
+@require_auth
+def mobile_order_detail(user, order_id):
+    for order in maintenance_orders:
+        if order["id"] == order_id:
+            schedule = find_schedule_by_order(order_id)
+            result = {"ok": True, "order": order}
+            if schedule:
+                result["schedule"] = schedule
+            return jsonify(result)
+    return jsonify({"ok": False, "error": "Order not found"}), 404
+
+
+@app.post("/mobile/orders/<order_id>/close")
+@require_auth
+def mobile_close_order(user, order_id):
+    data = request.get_json(silent=True) or {}
+    closed_at = time.time()
+    closed_order = None
+    for i, order in enumerate(maintenance_orders):
+        if order["id"] == order_id:
+            order["status"] = "closed"
+            order["closed_at"] = closed_at
+            order["closed_by"] = user.get("username", "unknown")
+            closed_order = maintenance_orders.pop(i)
+            break
+    if not closed_order:
+        return jsonify({"ok": False, "error": "Order not found"}), 404
+    removed_schedule_ids = []
+    kept = []
+    for schedule in maintenance_schedules:
+        if schedule.get("order_id") == order_id:
+            removed_schedule_ids.append(schedule.get("id"))
+        else:
+            kept.append(schedule)
+    maintenance_schedules[:] = kept
+    mongo_save(history_coll, closed_order)
+    mongo_delete(orders_coll, order_id)
+    mongo_delete_many(schedule_coll, {"order_id": order_id})
+    maintenance_history.append(closed_order)
+    socketio.emit("maintenance_order_removed", {"id": order_id})
+    socketio.emit("maintenance_history", closed_order)
+    for sid in removed_schedule_ids:
+        socketio.emit("maintenance_schedule_removed", {"id": sid, "order_id": order_id})
+    return jsonify({"ok": True, "closed_order_id": order_id, "removed_schedule_ids": removed_schedule_ids})
+
+
 def seed_test_orders():
     if maintenance_orders:
         return
@@ -827,4 +1015,4 @@ else:
 start_workers()
 
 if __name__ == '__main__':
-    socketio.run(app,  port=FLASK_PORT, debug=FLASK_DEBUG, use_reloader=False)
+    socketio.run(app, host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG, use_reloader=False, allow_unsafe_werkzeug=True)

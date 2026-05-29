@@ -1,0 +1,51 @@
+
+> AMDA Sensor Data Dashboard@1.0.0 start
+> node server.js
+
+⚙️  Generating sensor history...
+
+✅ CNC_01 balanced dataset generated
+none: 1029
+spindle_bearing_failure: 999
+tool_wear: 1000
+lubrication_failure: 983
+tool_breakage: 989
+
+✅ CNC_02 balanced dataset generated
+none: 1022
+cutting_overload: 988
+chatter: 997
+coolant_failure: 995
+spindle_misalignment: 998
+
+✅ PUMP_03 balanced dataset generated
+none: 1019
+bearing_failure: 988
+cavitation: 1009
+seal_leakage: 994
+impeller_damage: 992
+clogging: 996
+dry_run: 1002
+
+✅ CONVEYOR_04 balanced dataset generated
+none: 1026
+roller_bearing_failure: 997
+belt_misalignment: 991
+overload: 1006
+belt_slip: 998
+gearbox_overheating: 989
+jam: 993
+✅  History ready: 4 machines × 5000 readings each.
+
+╔══════════════════════════════════════════════════════════╗
+║  🏭  Predictive Maintenance Simulation Server            ║
+╠══════════════════════════════════════════════════════════╣
+║  Dashboard   →  http://localhost:3000                   ║
+║  Stream      →  GET  /stream/{machine_id}                ║
+║  History     →  GET  /history/{machine_id}               ║
+║  Alert       →  POST /alert                              ║
+║  Maintenance →  POST /schedule-maintenance               ║
+╠══════════════════════════════════════════════════════════╣
+║  Machines: CNC_01  CNC_02  PUMP_03  CONVEYOR_04              ║
+╚══════════════════════════════════════════════════════════╝
+

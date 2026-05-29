@@ -805,7 +805,10 @@ const App = () => {
         });
 
         socket.on('alert', (alert) => {
-            setAlerts(prev => [...prev.slice(-19), alert]);
+            setAlerts(prev => {
+                if (prev.some(a => a.id === alert.id)) return prev;
+                return [...prev.slice(-19), alert];
+            });
         });
 
         socket.on('maintenance_order', (order) => {

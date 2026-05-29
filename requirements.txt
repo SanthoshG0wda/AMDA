@@ -1,4 +1,4 @@
-eventlet
+# eventlet is no longer required (using threading mode)
 python-dotenv
 gunicorn<26
 flask
