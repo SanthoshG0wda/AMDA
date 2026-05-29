@@ -2,9 +2,12 @@ import eventlet
 eventlet.monkey_patch()
 
 import json
+import logging
+import smtplib
 import time
 import threading
 from dataclasses import dataclass
+from email.message import EmailMessage
 from typing import Any, Dict, Optional
 
 import joblib
@@ -20,6 +23,8 @@ from config import (
     MODELS_DIR, STREAM_BASE_URL, ALERT_COOLDOWN_SECONDS,
     TURN_AROUND_TIME_SECONDS, FLASK_SECRET_KEY, FLASK_DEBUG,
     FLASK_HOST, FLASK_PORT, MONGO_URI, MONGO_DB,
+    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM,
+    NOTIFY_EMAIL, OVERDUE_CHECK_INTERVAL,
 )
 
 app = Flask(__name__)
@@ -106,6 +111,128 @@ maintenance_schedules = []
 maintenance_history = []
 worker_threads = {}
 last_alert_by_machine_failure: Dict[str, float] = {}
+notified_overdue_orders: set = set()
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
+
+
+def send_email_notification(order: Dict[str, Any]) -> bool:
+    if not SMTP_HOST or not NOTIFY_EMAIL:
+        logger.info(f"Email not configured — skipping notification for {order['id']}")
+        return False
+    msg = EmailMessage()
+    msg["Subject"] = f"Overdue Maintenance Order: {order['id']} — {order['machine_id']}"
+    msg["From"] = SMTP_FROM
+    msg["To"] = NOTIFY_EMAIL
+    elapsed = int(time.time() - order.get("created_at", time.time()))
+    priority_level = (order.get("priority") or "medium").lower()
+    prio_color = {"critical": "#dc2626", "high": "#ea580c", "medium": "#ca8a04", "low": "#2563eb"}.get(priority_level, "#6b7280")
+    created_fmt = time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(order.get("created_at", 0)))
+    days, rem = divmod(elapsed, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    overdue_str = f"{days}d {hours}h {minutes}m" if days else f"{hours}h {minutes}m"
+    html = f"""\
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f1f5f9;padding:32px 16px">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.08)">
+<tr><td style="background:linear-gradient(135deg,#0f172a,#1e293b);padding:32px 40px;text-align:center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td align="center" style="padding-bottom:8px">
+<span style="display:inline-block;width:44px;height:44px;line-height:44px;border-radius:10px;background:linear-gradient(135deg,#06b6d4,#2563eb);color:#fff;font-size:22px;font-weight:700;text-align:center">A</span>
+</td></tr>
+<tr><td style="color:#ffffff;font-size:22px;font-weight:700;letter-spacing:-0.5px;padding-top:12px">AMDA System</td></tr>
+<tr><td style="color:#94a3b8;font-size:13px;letter-spacing:1px;padding-top:4px">AUTONOMOUS MAINTENANCE DECISION AGENT</td></tr>
+</table>
+</td></tr>
+<tr><td style="padding:32px 40px 8px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td style="font-size:18px;font-weight:600;color:#0f172a;padding-bottom:4px">Overdue Maintenance Alert</td></tr>
+<tr><td style="font-size:14px;color:#64748b;padding-bottom:24px;border-bottom:1px solid #e2e8f0">
+A maintenance order has exceeded its turnaround time and remains open.
+</td></tr>
+</table>
+</td></tr>
+<tr><td style="padding:24px 40px 16px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px;border:1px solid #e2e8f0;overflow:hidden">
+<tr style="background-color:#f8fafc"><td style="padding:14px 20px;font-size:13px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e2e8f0;width:40%">Field</td><td style="padding:14px 20px;font-size:13px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e2e8f0">Details</td></tr>
+<tr><td style="padding:14px 20px;font-size:14px;color:#64748b;border-bottom:1px solid #f1f5f9">Order ID</td><td style="padding:14px 20px;font-size:14px;font-weight:600;color:#0f172a;font-family:Menlo,Consolas,monospace;border-bottom:1px solid #f1f5f9">{order['id']}</td></tr>
+<tr><td style="padding:14px 20px;font-size:14px;color:#64748b;border-bottom:1px solid #f1f5f9">Machine</td><td style="padding:14px 20px;font-size:14px;font-weight:600;color:#0f172a;font-family:Menlo,Consolas,monospace;border-bottom:1px solid #f1f5f9">{order.get('machine_id', 'N/A')}</td></tr>
+<tr><td style="padding:14px 20px;font-size:14px;color:#64748b;border-bottom:1px solid #f1f5f9">Failure</td><td style="padding:14px 20px;font-size:14px;color:#0f172a;border-bottom:1px solid #f1f5f9">{order.get('failure', 'N/A')}</td></tr>
+<tr><td style="padding:14px 20px;font-size:14px;color:#64748b;border-bottom:1px solid #f1f5f9">Priority</td><td style="padding:14px 20px;border-bottom:1px solid #f1f5f9"><span style="display:inline-block;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600;background-color:{prio_color}15;color:{prio_color};text-transform:capitalize">{priority_level}</span> <span style="font-size:13px;color:#64748b;margin-left:8px">(score: {order.get('priority_score', '-')})</span></td></tr>
+<tr><td style="padding:14px 20px;font-size:14px;color:#64748b;border-bottom:1px solid #f1f5f9">Required Role</td><td style="padding:14px 20px;font-size:14px;color:#0f172a;border-bottom:1px solid #f1f5f9;text-transform:capitalize">{order.get('required_role', 'technician')}</td></tr>
+<tr><td style="padding:14px 20px;font-size:14px;color:#64748b;border-bottom:1px solid #f1f5f9">Status</td><td style="padding:14px 20px;border-bottom:1px solid #f1f5f9"><span style="display:inline-block;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600;background-color:#dc262615;color:#dc2626">open</span></td></tr>
+<tr><td style="padding:14px 20px;font-size:14px;color:#64748b;border-bottom:1px solid #f1f5f9">Created</td><td style="padding:14px 20px;font-size:14px;color:#0f172a;font-family:Menlo,Consolas,monospace;border-bottom:1px solid #f1f5f9">{created_fmt}</td></tr>
+<tr><td style="padding:14px 20px;font-size:14px;color:#64748b">Overdue By</td><td style="padding:14px 20px;font-size:14px;font-weight:700;color:#dc2626;font-family:Menlo,Consolas,monospace">{overdue_str}</td></tr>
+</table>
+</td></tr>
+<tr><td style="padding:0 40px 24px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="font-size:14px;color:#475569;background-color:#f8fafc;border-radius:8px;padding:16px 20px;border-left:3px solid #06b6d4"><strong style="color:#0f172a">Notes:</strong> {order.get('notes', 'N/A')}</td></tr></table></td></tr>
+<tr><td style="padding:0 40px 32px;text-align:center">
+<table role="presentation" cellpadding="0" cellspacing="0">
+<tr><td style="border-radius:8px;background-color:#0f172a"><a href="http://localhost:5000/maintenance-orders" style="display:inline-block;padding:14px 36px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px">View in Dashboard</a></td></tr>
+</table>
+</td></tr>
+<tr><td style="background-color:#f8fafc;padding:20px 40px;border-top:1px solid #e2e8f0;text-align:center;font-size:12px;color:#94a3b8">
+AMDA — Autonomous Maintenance Decision Agent &bull; This is an automated alert.
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>"""
+    msg.set_content(f"""Overdue Maintenance Alert — {order['id']}
+
+A maintenance order has exceeded its TAT and remains open.
+
+  Order ID:     {order['id']}
+  Machine:      {order['machine_id']}
+  Failure:      {order.get('failure', 'N/A')}
+  Priority:     {priority_level} (score: {order.get('priority_score', 'N/A')})
+  Required:     {order.get('required_role', 'technician')}
+  Status:       open
+  Created:      {created_fmt}
+  Overdue by:   {overdue_str}
+  Notes:        {order.get('notes', 'N/A')}""")
+    msg.add_alternative(html, subtype='html')
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
+            if SMTP_PORT == 587:
+                s.starttls()
+            if SMTP_USER:
+                s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+        logger.info(f"Email sent for overdue order {order['id']} -> {NOTIFY_EMAIL}")
+        return True
+    except Exception as exc:
+        logger.error(f"Failed to send email for {order['id']}: {exc}")
+        return False
+
+
+def check_overdue_orders() -> None:
+    while True:
+        time.sleep(OVERDUE_CHECK_INTERVAL)
+        now = time.time()
+        for order in maintenance_orders:
+            if order.get("status") != "open":
+                continue
+            order_id = order.get("id")
+            if order_id in notified_overdue_orders:
+                continue
+            created = order.get("created_at", 0)
+            if not created:
+                continue
+            if now - created >= TURN_AROUND_TIME_SECONDS:
+                sent = send_email_notification(order)
+                if sent:
+                    notified_overdue_orders.add(order_id)
+                else:
+                    notified_overdue_orders.add(order_id)
+
 
 SEVERITY_MAP = {
     "Critical Thermal Stress": 100,
@@ -493,6 +620,10 @@ def start_workers() -> None:
             thread = threading.Thread(target=stream_worker, args=(config,), daemon=True)
             worker_threads[config.machine_id] = thread
             thread.start()
+    if "overdue_checker" not in worker_threads:
+        t = threading.Thread(target=check_overdue_orders, daemon=True)
+        worker_threads["overdue_checker"] = t
+        t.start()
 
 
 @app.get('/')

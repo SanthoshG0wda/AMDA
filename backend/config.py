@@ -21,3 +21,11 @@ FLASK_SECRET_KEY = os.environ.get("AMDA_FLASK_SECRET_KEY", "change-me-in-product
 FLASK_DEBUG = os.environ.get("AMDA_FLASK_DEBUG", "false").lower() == "true"
 FLASK_HOST = os.environ.get("AMDA_FLASK_HOST", "0.0.0.0")
 FLASK_PORT = int(os.environ.get("AMDA_FLASK_PORT", "5000"))
+
+SMTP_HOST = os.environ.get("AMDA_SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("AMDA_SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("AMDA_SMTP_USER", "")
+SMTP_PASS = os.environ.get("AMDA_SMTP_PASS", "")
+SMTP_FROM = os.environ.get("AMDA_SMTP_FROM", "amda@localhost")
+NOTIFY_EMAIL = os.environ.get("AMDA_NOTIFY_EMAIL", "")
+OVERDUE_CHECK_INTERVAL = int(os.environ.get("AMDA_OVERDUE_CHECK_INTERVAL", "300"))
