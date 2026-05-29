@@ -1,0 +1,7 @@
+feature,importance
+discharge_pressure_bar,0.3174925960969251
+flow_rate_lpm,0.2148386699456294
+suction_pressure_bar,0.16917844568743862
+bearing_temperature_C,0.11021355588209496
+vibration_mm_s,0.10362711206155881
+motor_current_A,0.0846496203263532

@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AMDA Sensor Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@400;600;700;900&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #111418;
+    --border: #1e2530;
+    --green: #00ff88;
+    --yellow: #ffcc00;
+    --red: #ff3355;
+    --blue: #00aaff;
+    --dim: #4a5568;
+    --text: #c8d0dc;
+    --mono: 'Share Tech Mono', monospace;
+    --sans: 'Barlow Condensed', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 28px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(90deg, #0d1117 0%, #111820 100%);
+  }
+
+  .logo { font-size: 1.3rem; font-weight: 900; letter-spacing: 0.08em; color: var(--green); }
+  .logo span { color: var(--text); font-weight: 400; }
+  .clock { font-family: var(--mono); font-size: 0.85rem; color: var(--dim); }
+
+  .api-bar {
+    display: flex; gap: 10px; flex-wrap: wrap;
+    padding: 10px 28px; background: #0d0f14; border-bottom: 1px solid var(--border);
+    font-family: var(--mono); font-size: 0.72rem;
+  }
+
+  .api-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 10px; color: var(--dim);
+  }
+
+  .method { font-weight: 700; }
+  .method.get { color: var(--green); }
+  .method.post { color: var(--yellow); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 1px;
+    background: var(--border);
+  }
+
+  .card { background: var(--surface); padding: 20px 24px; }
+
+  .card-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 16px;
+  }
+
+  .machine-name { font-size: 1.5rem; font-weight: 900; letter-spacing: 0.05em; color: #fff; }
+  .machine-sub { font-family: var(--mono); font-size: 0.7rem; color: var(--dim); margin-top: 2px; }
+
+  .machine-type {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--blue);
+    text-transform: uppercase;
+  }
+
+  .badge {
+    font-family: var(--mono); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em;
+    padding: 4px 10px; border-radius: 3px; text-transform: uppercase;
+  }
+
+  .badge.running { background: rgba(0,255,136,0.12); color: var(--green); border: 1px solid rgba(0,255,136,0.25); }
+  .badge.warning { background: rgba(255,204,0,0.12); color: var(--yellow); border: 1px solid rgba(255,204,0,0.25); }
+  .badge.fault { background: rgba(255,51,85,0.15); color: var(--red); border: 1px solid rgba(255,51,85,0.3); animation: pulse 0.8s ease infinite alternate; }
+  .badge.waiting { background: rgba(74,85,104,0.15); color: var(--dim); border: 1px solid var(--border); }
+
+  @keyframes pulse { from { opacity: 1 } to { opacity: 0.4 } }
+
+  .failure-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 14px;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--dim);
+  }
+
+  .failure-name {
+    color: var(--yellow);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .metric {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 12px;
+  }
+
+  .metric-label {
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .metric-value {
+    font-family: var(--mono);
+    font-size: 1.1rem;
+    color: #fff;
+    line-height: 1.2;
+  }
+
+  .metric-value.warn { color: var(--yellow); }
+  .metric-value.crit { color: var(--red); }
+  .metric-unit { font-size: 0.65rem; color: var(--dim); margin-left: 2px; }
+
+  .sparkline-wrap { margin-bottom: 14px; }
+
+  .spark-label {
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  svg.spark { width: 100%; height: 38px; display: block; }
+
+  .ts {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--dim);
+    margin-bottom: 4px;
+  }
+
+  .alerts-section { padding: 20px 28px; border-top: 1px solid var(--border); }
+
+  .section-title {
+    font-size: 1rem; font-weight: 700; letter-spacing: 0.1em;
+    color: var(--text); text-transform: uppercase; margin-bottom: 14px;
+  }
+
+  .alert-list {
+    display: flex; flex-direction: column; gap: 8px;
+    max-height: 280px; overflow-y: auto;
+  }
+
+  .alert-item {
+    display: grid; grid-template-columns: auto 1fr auto;
+    gap: 12px; align-items: start;
+    background: rgba(255,51,85,0.07); border: 1px solid rgba(255,51,85,0.2);
+    border-radius: 4px; padding: 10px 14px; font-family: var(--mono); font-size: 0.72rem;
+  }
+
+  .alert-machine { color: var(--red); font-weight: 700; }
+  .alert-reason { color: var(--text); }
+  .alert-time { color: var(--dim); white-space: nowrap; }
+  .no-alerts { color: var(--dim); font-family: var(--mono); font-size: 0.8rem; }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+
+<body>
+
+<header>
+  <div class="logo">🏭 AMDA <span>Sensor Dashboard</span></div>
+  <div class="clock" id="clock">--:--:--</div>
+</header>
+
+<div class="api-bar">
+  <div class="api-pill"><span class="method get">GET</span> /stream/{machine_id}</div>
+  <div class="api-pill"><span class="method get">GET</span> /history/{machine_id}</div>
+  <div class="api-pill"><span class="method post">POST</span> /alert</div>
+  <div class="api-pill"><span class="method post">POST</span> /schedule-maintenance</div>
+  <div class="api-pill"><span class="method get">GET</span> /alerts</div>
+  <div class="api-pill"><span class="method get">GET</span> /machines</div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="alerts-section">
+  <div class="section-title">🚨 Raised Alerts</div>
+  <div class="alert-list" id="alert-list">
+    <div class="no-alerts">No alerts raised yet. Your agent calls POST /alert to populate this list.</div>
+  </div>
+</div>
+
+<script>
+const MACHINES = ["CNC_01", "CNC_02", "PUMP_03", "CONVEYOR_04"];
+const HISTORY = {};
+const MAX_SPARK = 60;
+
+function isCnc(machineId) {
+  return machineId.startsWith("CNC");
+}
+
+function isPump(machineId) {
+  return machineId.startsWith("PUMP");
+}
+
+function isConveyor(machineId) {
+  return machineId.startsWith("CONVEYOR");
+}
+
+function buildMetric(id, label, unit) {
+  return `
+    <div class="metric">
+      <div class="metric-label">${label}</div>
+      <div class="metric-value" id="${id}">—<span class="metric-unit">${unit}</span></div>
+    </div>
+  `;
+}
+
+function buildCard(machineId) {
+  HISTORY[machineId] = [];
+
+  const cnc = isCnc(machineId);
+  const pump = isPump(machineId);
+  const conveyor = isConveyor(machineId);
+
+  const type = cnc ? "CNC Machine" : pump ? "Pump" : conveyor ? "Conveyor" : "Machine";
+
+  let metrics = "";
+
+  if (cnc) {
+    metrics = [
+      buildMetric(`m1-${machineId}`, "Spindle Temp", "°C"),
+      buildMetric(`m2-${machineId}`, "Vibration", "mm/s"),
+      buildMetric(`m3-${machineId}`, "Spindle Current", "%"),
+      buildMetric(`m4-${machineId}`, "Acoustic", "dBA"),
+      buildMetric(`m5-${machineId}`, "Lubrication Pressure", "bar"),
+      buildMetric(`m6-${machineId}`, "Coolant Temp", "°C"),
+    ].join("");
+  } else if (pump) {
+    metrics = [
+      buildMetric(`m1-${machineId}`, "Bearing Temp", "°C"),
+      buildMetric(`m2-${machineId}`, "Vibration", "mm/s"),
+      buildMetric(`m3-${machineId}`, "Motor Current", "A"),
+      buildMetric(`m4-${machineId}`, "Suction Pressure", "bar"),
+      buildMetric(`m5-${machineId}`, "Discharge Pressure", "bar"),
+      buildMetric(`m6-${machineId}`, "Flow Rate", "LPM"),
+    ].join("");
+  } else if (conveyor) {
+    metrics = [
+      buildMetric(`m1-${machineId}`, "Gearbox Temp", "°C"),
+      buildMetric(`m2-${machineId}`, "Vibration", "mm/s"),
+      buildMetric(`m3-${machineId}`, "Motor Current", "A"),
+      buildMetric(`m4-${machineId}`, "Belt Speed", "m/s"),
+      buildMetric(`m5-${machineId}`, "Load", "kg"),
+      buildMetric(`m6-${machineId}`, "Belt Alignment", "mm"),
+    ].join("");
+  }
+
+  const card = document.createElement("div");
+  card.className = "card";
+  card.id = `card-${machineId}`;
+  card.innerHTML = `
+    <div class="card-header">
+      <div>
+        <div class="machine-name">${machineId}</div>
+        <div class="machine-sub">SSE → /stream/${machineId}</div>
+        <div class="machine-type">${type}</div>
+      </div>
+      <div class="badge waiting" id="badge-${machineId}">Connecting…</div>
+    </div>
+
+    <div class="failure-row">
+      <span>Active Failure</span>
+      <span class="failure-name" id="failure-${machineId}">none</span>
+    </div>
+
+    <div class="metrics">
+      ${metrics}
+    </div>
+
+    <div class="sparkline-wrap">
+      <div class="spark-label">Vibration (last 60 s)</div>
+      <svg class="spark" id="spark-${machineId}" viewBox="0 0 200 38" preserveAspectRatio="none">
+        <polyline id="line-${machineId}" fill="none" stroke="#00ff88" stroke-width="1.5" points=""></polyline>
+      </svg>
+    </div>
+
+    <div class="ts" id="ts-${machineId}">Waiting for first reading…</div>
+  `;
+
+  return card;
+}
+
+const grid = document.getElementById("grid");
+MACHINES.forEach(m => grid.appendChild(buildCard(m)));
+
+function vibClass(v) {
+  return v > 4.5 ? "crit" : v > 2.0 ? "warn" : "";
+}
+
+function cncTempClass(v) {
+  return v > 70 ? "crit" : v > 58 ? "warn" : "";
+}
+
+function spindleCurrentClass(v) {
+  return v > 120 ? "crit" : v > 85 ? "warn" : "";
+}
+
+function acousticClass(v) {
+  return v > 100 ? "crit" : v > 92 ? "warn" : "";
+}
+
+function lubeClass(v) {
+  return v < 0.8 ? "crit" : v < 1.2 ? "warn" : "";
+}
+
+function coolantClass(v) {
+  return v > 40 ? "crit" : v > 34 ? "warn" : "";
+}
+
+function pumpTempClass(v) {
+  return v > 75 ? "crit" : v > 65 ? "warn" : "";
+}
+
+function pumpCurrentClass(v) {
+  return v > 20 ? "crit" : v > 16 ? "warn" : "";
+}
+
+function suctionClass(v) {
+  return v < 0.5 ? "crit" : v < 0.8 ? "warn" : "";
+}
+
+function dischargeClass(v) {
+  return v < 1.8 ? "crit" : v < 2.5 ? "warn" : "";
+}
+
+function flowClass(v) {
+  return v < 80 ? "crit" : v < 120 ? "warn" : "";
+}
+
+function conveyorCurrentClass(v) {
+  return v > 14 ? "crit" : v > 10 ? "warn" : "";
+}
+
+function gearboxTempClass(v) {
+  return v > 80 ? "crit" : v > 65 ? "warn" : "";
+}
+
+function beltSpeedClass(v) {
+  return v < 0.5 ? "crit" : v < 1.0 ? "warn" : "";
+}
+
+function loadClass(v) {
+  return v > 450 ? "crit" : v > 320 ? "warn" : "";
+}
+
+function alignmentClass(v) {
+  return v > 12 ? "crit" : v > 6 ? "warn" : "";
+}
+
+function setMetricValue(id, val, cls = "") {
+  const el = document.getElementById(id);
+  if (!el) return;
+
+  const unit = el.querySelector(".metric-unit");
+  el.className = `metric-value${cls ? " " + cls : ""}`;
+  el.textContent = val ?? "—";
+
+  if (unit) el.appendChild(unit);
+}
+
+function updateSparkline(machineId) {
+  const h = HISTORY[machineId];
+  if (h.length < 2) return;
+
+  const vals = h.map(r => r.vibration_mm_s ?? 0);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals) || min + 1;
+  const W = 200, H = 38, PAD = 2;
+
+  const pts = vals.map((v, i) => {
+    const x = (i / (vals.length - 1)) * W;
+    const y = H - PAD - ((v - min) / (max - min || 1)) * (H - PAD * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+
+  const line = document.getElementById(`line-${machineId}`);
+  if (!line) return;
+
+  const latest = vals[vals.length - 1];
+  line.setAttribute("stroke", latest > 4.5 ? "#ff3355" : latest > 2.0 ? "#ffcc00" : "#00ff88");
+  line.setAttribute("points", pts);
+}
+
+function applyReading(r) {
+  const m = r.machine_id;
+  const cnc = r.machine_type === "cnc" || isCnc(m);
+  const pump = r.machine_type === "pump" || isPump(m);
+  const conveyor = r.machine_type === "conveyor" || isConveyor(m);
+
+  const hist = HISTORY[m];
+  hist.push(r);
+  if (hist.length > MAX_SPARK) hist.shift();
+
+  const badge = document.getElementById(`badge-${m}`);
+  if (badge) {
+    badge.className = `badge ${r.status || "waiting"}`;
+    badge.textContent = (r.status || "waiting").toUpperCase();
+  }
+
+  const failure = document.getElementById(`failure-${m}`);
+  if (failure) {
+    failure.textContent = (r.active_failure || "none").replaceAll("_", " ");
+  }
+
+  if (cnc) {
+    setMetricValue(`m1-${m}`, r.spindle_temperature_C, cncTempClass(r.spindle_temperature_C ?? 0));
+    setMetricValue(`m2-${m}`, r.vibration_mm_s, vibClass(r.vibration_mm_s ?? 0));
+    setMetricValue(`m3-${m}`, r.spindle_current_percent, spindleCurrentClass(r.spindle_current_percent ?? 0));
+    setMetricValue(`m4-${m}`, r.acoustic_dba, acousticClass(r.acoustic_dba ?? 0));
+    setMetricValue(`m5-${m}`, r.lubrication_pressure_bar, lubeClass(r.lubrication_pressure_bar ?? 0));
+    setMetricValue(`m6-${m}`, r.coolant_temperature_C, coolantClass(r.coolant_temperature_C ?? 0));
+  } else if (pump) {
+    setMetricValue(`m1-${m}`, r.bearing_temperature_C, pumpTempClass(r.bearing_temperature_C ?? 0));
+    setMetricValue(`m2-${m}`, r.vibration_mm_s, vibClass(r.vibration_mm_s ?? 0));
+    setMetricValue(`m3-${m}`, r.motor_current_A, pumpCurrentClass(r.motor_current_A ?? 0));
+    setMetricValue(`m4-${m}`, r.suction_pressure_bar, suctionClass(r.suction_pressure_bar ?? 0));
+    setMetricValue(`m5-${m}`, r.discharge_pressure_bar, dischargeClass(r.discharge_pressure_bar ?? 0));
+    setMetricValue(`m6-${m}`, r.flow_rate_lpm, flowClass(r.flow_rate_lpm ?? 0));
+  } else if (conveyor) {
+    setMetricValue(`m1-${m}`, r.gearbox_temperature_C, gearboxTempClass(r.gearbox_temperature_C ?? 0));
+    setMetricValue(`m2-${m}`, r.vibration_mm_s, vibClass(r.vibration_mm_s ?? 0));
+    setMetricValue(`m3-${m}`, r.motor_current_A, conveyorCurrentClass(r.motor_current_A ?? 0));
+    setMetricValue(`m4-${m}`, r.belt_speed_mps, beltSpeedClass(r.belt_speed_mps ?? 0));
+    setMetricValue(`m5-${m}`, r.load_kg, loadClass(r.load_kg ?? 0));
+    setMetricValue(`m6-${m}`, r.belt_alignment_mm, alignmentClass(r.belt_alignment_mm ?? 0));
+  }
+
+  const ts = document.getElementById(`ts-${m}`);
+  if (ts) ts.textContent = `${r.timestamp} • ${r.machine_type || "machine"}`;
+
+  updateSparkline(m);
+}
+
+MACHINES.forEach(machineId => {
+  function connect() {
+    const es = new EventSource(`/stream/${machineId}`);
+
+    es.onmessage = e => {
+      try {
+        applyReading(JSON.parse(e.data));
+      } catch (err) {
+        console.error("Bad SSE payload", err);
+      }
+    };
+
+    es.onerror = () => {
+      const badge = document.getElementById(`badge-${machineId}`);
+      if (badge) {
+        badge.className = "badge waiting";
+        badge.textContent = "Reconnecting…";
+      }
+
+      es.close();
+      setTimeout(connect, 3000);
+    };
+  }
+
+  connect();
+});
+
+async function pollAlerts() {
+  try {
+    const res = await fetch("/alerts");
+    const data = await res.json();
+    const list = document.getElementById("alert-list");
+
+    if (data.count === 0) {
+      list.innerHTML = `<div class="no-alerts">No alerts raised yet. Your agent calls POST /alert to populate this list.</div>`;
+      return;
+    }
+
+    list.innerHTML = [...data.alerts].reverse().map(a => `
+      <div class="alert-item">
+        <span class="alert-machine">${a.machine_id}</span>
+        <span class="alert-reason">${a.reason}</span>
+        <span class="alert-time">${new Date(a.triggered_at).toLocaleTimeString()}</span>
+      </div>
+    `).join("");
+  } catch (err) {
+    console.error("Failed to load alerts", err);
+  }
+}
+
+setInterval(pollAlerts, 2000);
+pollAlerts();
+
+setInterval(() => {
+  document.getElementById("clock").textContent = new Date().toLocaleTimeString();
+}, 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AMDA System - Realistic Simulation</title>
+
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #050505; color: #e0e0e0; margin: 0; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #111; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+
+        .grid-dashboard { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; }
+        @media (max-width: 768px) { .grid-dashboard { grid-template-columns: 1fr; } }
+
+        .glass-panel { background: rgba(20, 20, 20, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; }
+
+        @keyframes pulse-border {
+            0%, 100% { border-color: rgba(255, 59, 59, 0.3); box-shadow: 0 0 0 0 rgba(255,59,59,0); }
+            50% { border-color: rgba(255, 59, 59, 0.8); box-shadow: 0 0 20px rgba(255,59,59,0.2); }
+        }
+
+        .animate-critical { animation: pulse-border 2s infinite; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const SOCKET_URL = "http://localhost:5000";
+
+        const MACHINE_ARCHETYPES = {
+            'CNC_01': {
+                name: 'CNC Mill',
+                faultyComponent: 'Spindle Bearing',
+                baseline: { vibration: 2.5, temperature: 45, spindle_load: 60 }
+            },
+            'CNC_02': {
+                name: 'CNC Lathe',
+                faultyComponent: 'Cooling Unit',
+                baseline: { temperature: 40, coolant_flow: 10, rpm: 3000 }
+            },
+            'PUMP_03': {
+                name: 'Industrial Pump',
+                faultyComponent: 'Intake Impeller',
+                baseline: { rpm: 1500, pressure_in: 2.0, pressure_out: 5.0, vibration: 3.0 }
+            },
+            'CONVEYOR_04': {
+                name: 'Assembly Conveyor',
+                faultyComponent: 'Drive / Belt',
+                baseline: { speed: 1.0, motor_amps: 5.0, belt_tension: 90 }
+            }
+        };
+
+        const getInitialMachines = () => [
+    {
+        id: 'CNC_01',
+        status: 'Waiting',
+        riskScore: 0,
+        sensors: {
+            vibration_mm_s: 0,
+            spindle_current_percent: 0,
+            spindle_temperature_C: 0,
+            acoustic_dba: 0,
+            lubrication_pressure_bar: 0,
+            coolant_temperature_C: 0
+        },
+        history: [0],
+        prediction: 'No data yet',
+        updatedAt: null
+    },
+    {
+        id: 'CNC_02',
+        status: 'Waiting',
+        riskScore: 0,
+        sensors: {
+            vibration_mm_s: 0,
+            spindle_current_percent: 0,
+            spindle_temperature_C: 0,
+            acoustic_dba: 0,
+            lubrication_pressure_bar: 0,
+            coolant_temperature_C: 0
+        },
+        history: [0],
+        prediction: 'No data yet',
+        updatedAt: null
+    },
+    {
+        id: 'PUMP_03',
+        status: 'Waiting',
+        riskScore: 0,
+        sensors: {
+            vibration_mm_s: 0,
+            motor_current_A: 0,
+            bearing_temperature_C: 0,
+            suction_pressure_bar: 0,
+            discharge_pressure_bar: 0,
+            flow_rate_lpm: 0
+        },
+        history: [0],
+        prediction: 'No data yet',
+        updatedAt: null
+    },
+    {
+        id: 'CONVEYOR_04',
+        status: 'Waiting',
+        riskScore: 0,
+        sensors: {
+            vibration_mm_s: 0,
+            motor_current_A: 0,
+            gearbox_temperature_C: 0,
+            belt_speed_mps: 0,
+            load_kg: 0,
+            belt_alignment_mm: 0
+        },
+        history: [0],
+        prediction: 'No data yet',
+        updatedAt: null
+    }
+];
+
+        const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+        const normalizePrediction = (prediction) => (prediction || 'Unknown').toString();
+
+        const predictionToRisk = (machineId, prediction, reading) => {
+    const p = normalizePrediction(prediction).toLowerCase();
+
+    if (p === 'healthy' || p === 'none') return 10;
+    if (p.includes('critical') || p.includes('fault') || p.includes('jam')) return 95;
+    if (p.includes('warning')) return 60;
+
+    if (machineId.startsWith('CNC')) {
+        return clamp(Math.round(
+            Number(reading.vibration_mm_s || 0) * 10 +
+            Number(reading.spindle_current_percent || 0) * 0.35 +
+            Number(reading.spindle_temperature_C || 0) * 0.25 +
+            Number(reading.acoustic_dba || 0) * 0.08
+        ), 10, 90);
+    }
+
+    if (machineId === 'PUMP_03') {
+        return clamp(Math.round(
+            Number(reading.vibration_mm_s || 0) * 12 +
+            Number(reading.motor_current_A || 0) * 1.5 +
+            Number(reading.bearing_temperature_C || 0) * 0.25 +
+            Math.max(0, 120 - Number(reading.flow_rate_lpm || 0)) * 0.2
+        ), 10, 90);
+    }
+
+    if (machineId === 'CONVEYOR_04') {
+        return clamp(Math.round(
+            Number(reading.vibration_mm_s || 0) * 12 +
+            Number(reading.motor_current_A || 0) * 2 +
+            Number(reading.gearbox_temperature_C || 0) * 0.25 +
+            Number(reading.belt_alignment_mm || 0) * 3 +
+            Math.max(0, 1.0 - Number(reading.belt_speed_mps || 0)) * 25
+        ), 10, 90);
+    }
+
+    return 25;
+};
+
+        const readingToDashboardSensors = (machineId, reading) => {
+    if (machineId.startsWith('CNC')) {
+        return {
+            vibration_mm_s: Number(reading.vibration_mm_s || 0),
+            spindle_current_percent: Number(reading.spindle_current_percent || 0),
+            spindle_temperature_C: Number(reading.spindle_temperature_C || 0),
+            acoustic_dba: Number(reading.acoustic_dba || 0),
+            lubrication_pressure_bar: Number(reading.lubrication_pressure_bar || 0),
+            coolant_temperature_C: Number(reading.coolant_temperature_C || 0)
+        };
+    }
+
+    if (machineId === 'PUMP_03') {
+        return {
+            vibration_mm_s: Number(reading.vibration_mm_s || 0),
+            motor_current_A: Number(reading.motor_current_A || 0),
+            bearing_temperature_C: Number(reading.bearing_temperature_C || 0),
+            suction_pressure_bar: Number(reading.suction_pressure_bar || 0),
+            discharge_pressure_bar: Number(reading.discharge_pressure_bar || 0),
+            flow_rate_lpm: Number(reading.flow_rate_lpm || 0)
+        };
+    }
+
+    if (machineId === 'CONVEYOR_04') {
+        return {
+            vibration_mm_s: Number(reading.vibration_mm_s || 0),
+            motor_current_A: Number(reading.motor_current_A || 0),
+            gearbox_temperature_C: Number(reading.gearbox_temperature_C || 0),
+            belt_speed_mps: Number(reading.belt_speed_mps || 0),
+            load_kg: Number(reading.load_kg || 0),
+            belt_alignment_mm: Number(reading.belt_alignment_mm || 0)
+        };
+    }
+
+    return reading;
+};
+        const statusFromRisk = (risk) => {
+            if (risk > 70) return 'Critical';
+            if (risk > 40) return 'Warning';
+            if (risk > 0) return 'Operational';
+            return 'Waiting';
+        };
+
+        const applyServerPayload = (prev, payload) => {
+    const machineId = payload.machine_id;
+    const reading = payload.reading || payload;
+    const prediction = normalizePrediction(
+        payload.prediction || reading.active_failure || 'none'
+    );
+
+    const riskScore = predictionToRisk(machineId, prediction, reading);
+
+    const status =
+        reading.status === 'fault'
+            ? 'Critical'
+            : reading.status === 'warning'
+            ? 'Warning'
+            : reading.status === 'running'
+            ? 'Operational'
+            : statusFromRisk(riskScore);
+
+    const sensors = readingToDashboardSensors(machineId, reading);
+
+    return prev.map((m) => {
+        if (m.id !== machineId) return m;
+
+        return {
+            ...m,
+            status,
+            riskScore,
+            sensors,
+            prediction: prediction.replaceAll('_', ' '),
+            updatedAt: reading.timestamp || payload.timestamp || new Date().toISOString(),
+            history: [...m.history.slice(-29), riskScore]
+        };
+    });
+};
+
+        const Navbar = ({ activePage, setActivePage, connected }) => (
+            <nav className="sticky top-0 z-50 border-b border-white/5 bg-black/90 backdrop-blur-xl">
+                <div className="max-w-screen-2xl mx-auto px-6 h-20 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/30">
+                            <span className="text-white font-bold text-lg">A</span>
+                        </div>
+                        <div>
+                            <span className="font-bold text-xl tracking-tight">AMDA System</span>
+                            <p className="text-[10px] text-gray-500 tracking-widest">AUTONOMOUS MAINTENANCE</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-6">
+                        <div className="flex gap-1 bg-white/5 rounded-xl p-1.5">
+                            {['Dashboard', 'Analysis', 'Maintenance', 'Schedules', 'History', 'Docs'].map(page => (
+                                <button
+                                    key={page}
+                                    onClick={() => setActivePage(page)}
+                                    className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${activePage === page ? 'bg-cyan-500/20 text-cyan-400 shadow-sm' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+                                >
+                                    {page}
+                                </button>
+                            ))}
+                        </div>
+                        <div className={`relative flex items-center gap-3 px-5 py-3 rounded-xl text-sm font-semibold transition-all border ${connected ? 'bg-green-500/10 text-green-400 border-green-500/50' : 'bg-red-500/10 text-red-400 border-red-500/50'}`}>
+                            <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`}></div>
+                            {connected ? 'Live Server Connected' : 'Server Disconnected'}
+                        </div>
+                    </div>
+                </div>
+            </nav>
+        );
+
+        const MiniChart = ({ data, riskScore }) => {
+            const ref = useRef(null);
+
+            useEffect(() => {
+                const ctx = ref.current.getContext('2d');
+                const w = ref.current.width;
+                const h = ref.current.height;
+
+                ctx.clearRect(0, 0, w, h);
+
+                const gradient = ctx.createLinearGradient(0, 0, 0, h);
+                gradient.addColorStop(0, riskScore > 70 ? 'rgba(255, 59, 59, 0.5)' : 'rgba(0, 240, 255, 0.5)');
+                gradient.addColorStop(1, 'rgba(0,0,0,0)');
+
+                ctx.beginPath();
+                ctx.moveTo(0, h);
+                const step = data.length > 1 ? w / (data.length - 1) : w;
+
+                data.forEach((v, i) => {
+                    const x = i * step;
+                    const y = h - (v / 100) * h;
+                    ctx.lineTo(x, y);
+                });
+
+                ctx.lineTo(w, h);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.strokeStyle = riskScore > 70 ? '#ff3b3b' : '#00f0ff';
+                ctx.lineWidth = 2;
+
+                data.forEach((v, i) => {
+                    const x = i * step;
+                    const y = h - (v / 100) * h;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                });
+
+                ctx.stroke();
+            }, [data, riskScore]);
+
+            return <canvas ref={ref} width={300} height={80} style={{ width: '100%', height: '80px' }} />;
+        };
+        const formatSensorLabel = (key) => {
+    const labels = {
+        vibration_mm_s: "Vibration (mm/s)",
+
+        spindle_current_percent: "Spindle Current (%)",
+        spindle_temperature_C: "Spindle Temp (°C)",
+        acoustic_dba: "Acoustic (dBA)",
+        lubrication_pressure_bar: "Lubrication Pressure (bar)",
+        coolant_temperature_C: "Coolant Temp (°C)",
+
+        motor_current_A: "Motor Current (A)",
+        bearing_temperature_C: "Bearing Temp (°C)",
+        suction_pressure_bar: "Suction Pressure (bar)",
+        discharge_pressure_bar: "Discharge Pressure (bar)",
+        flow_rate_lpm: "Flow Rate (LPM)",
+
+        gearbox_temperature_C: "Gearbox Temp (°C)",
+        belt_speed_mps: "Belt Speed (m/s)",
+        load_kg: "Load (kg)",
+        belt_alignment_mm: "Belt Alignment (mm)"
+    };
+
+    return labels[key] || key.replaceAll("_", " ");
+};
+
+        const MachineCard = ({ machine }) => {
+            const config = MACHINE_ARCHETYPES[machine.id];
+            const isCritical = machine.status === 'Critical';
+            const isWarning = machine.status === 'Warning';
+
+            return (
+                <div
+                    className={`glass-panel p-6 transition-all relative ${isCritical ? 'border-red-500 animate-critical' : 'border-transparent'}`}
+                    style={{ background: 'rgba(20, 20, 20, 0.7)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '16px' }}
+                >
+                    <div className="flex justify-between items-start mb-6">
+                        <div>
+                            <h3 className="text-2xl font-bold tracking-tight">{machine.id}</h3>
+                            <p className="text-sm text-gray-400">{config.name}</p>
+                        </div>
+                        <div className="text-right">
+                            <div className={`text-3xl font-mono font-bold ${isCritical ? 'text-red-400' : isWarning ? 'text-yellow-400' : 'text-white'}`}>
+                                {machine.riskScore}%
+                            </div>
+                            <div className={`text-xs px-3 py-1 rounded-full ${isCritical ? 'bg-red-500/20 text-red-400' : isWarning ? 'bg-yellow-500/20 text-yellow-400' : 'bg-green-500/20 text-green-400'}`}>
+                                {machine.status}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4 mb-6">
+                        <div className="col-span-2 grid grid-cols-2 gap-3">
+                            {Object.entries(machine.sensors).map(([key, val]) => (
+                                <div key={key} className="bg-black/30 p-3 rounded-lg border border-white/5">
+                                   <div className="text-xs text-gray-500 uppercase mb-1">
+    {formatSensorLabel(key)}
+</div>
+                                    <div className={`text-xl font-mono ${val > 80 ? 'text-red-400' : 'text-white'}`}>
+                                        {Number(val).toFixed(1)}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="flex flex-col justify-between bg-black/30 p-3 rounded-lg border border-white/5 h-full">
+                            <div>
+                                <div className="text-xs text-gray-500 uppercase mb-1">Diagnosis</div>
+                                <div className={`text-sm font-bold ${isCritical ? 'text-red-400' : isWarning ? 'text-yellow-400' : 'text-white'}`}>
+                                    {machine.prediction}
+                                </div>
+                            </div>
+                            <div className="mt-3 text-xs text-gray-400">
+                                Updated: {machine.updatedAt ? new Date(machine.updatedAt).toLocaleTimeString() : '—'}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-black/20 rounded-lg p-2">
+                        <MiniChart data={machine.history} riskScore={machine.riskScore} />
+                    </div>
+                </div>
+            );
+        };
+
+        const FailureLog = ({ machines }) => {
+            const getTTF = (risk) => {
+                if (risk > 85) return '< 30 mins';
+                if (risk > 70) return '~ 2 hours';
+                if (risk > 50) return '~ 48 hours';
+                return 'N/A (Healthy)';
+            };
+
+            return (
+                <div className="glass-panel p-6 mt-8 overflow-x-auto">
+                    <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2">
+                        <h3 className="text-xl font-bold">Failure Predictive Log</h3>
+                        <span className="text-xs text-gray-500">System: AMDA Live</span>
+                    </div>
+                    <table className="w-full text-sm">
+                        <thead className="text-gray-500 border-b border-gray-800 text-xs uppercase tracking-wider">
+                            <tr>
+                                <th className="text-left py-4 px-4">Machine ID</th>
+                                <th className="text-left py-4 px-4">Risk Level</th>
+                                <th className="text-left py-4 px-4">Prediction</th>
+                                <th className="text-left py-4 px-4">Timestamp</th>
+                                <th className="text-left py-4 px-4">Est. Time to Failure</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {machines.map(m => (
+                                <tr key={m.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                                    <td className="py-4 px-4 font-mono font-bold">{m.id}</td>
+                                    <td className="py-4 px-4">
+                                        <span className={`px-3 py-1 rounded text-xs font-semibold ${m.status === 'Critical' ? 'bg-red-500/20 text-red-400' : m.status === 'Warning' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-green-500/20 text-green-400'}`}>
+                                            {m.status}
+                                        </span>
+                                    </td>
+                                    <td className="py-4 px-4 text-gray-300">{m.prediction}</td>
+                                    <td className="py-4 px-4 text-gray-500 font-mono">{m.updatedAt ? new Date(m.updatedAt).toLocaleTimeString() : '—'}</td>
+                                    <td className="py-4 px-4 font-bold text-red-400">{getTTF(m.riskScore)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        };
+
+        const Dashboard = ({ machines }) => (
+            <div>
+                <div className="grid-dashboard">
+                    {machines.map(m => <MachineCard key={m.id} machine={m} />)}
+                </div>
+                <FailureLog machines={machines} />
+            </div>
+        );
+
+        const AnalysisPage = ({ machines }) => {
+            const LargeChart = ({ data }) => {
+                const ref = useRef(null);
+
+                useEffect(() => {
+                    const ctx = ref.current.getContext('2d');
+                    const w = ref.current.width;
+                    const h = ref.current.height;
+
+                    ctx.clearRect(0, 0, w, h);
+                    ctx.fillStyle = '#111';
+                    ctx.fillRect(0, 0, w, h);
+
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 0.5;
+
+                    for (let i = 0; i <= 4; i++) {
+                        const y = h / 4 * i;
+                        ctx.beginPath();
+                        ctx.moveTo(0, y);
+                        ctx.lineTo(w, y);
+                        ctx.stroke();
+                    }
+
+                    ctx.beginPath();
+                    ctx.strokeStyle = '#00f0ff';
+                    ctx.lineWidth = 2;
+
+                    const step = data.length > 1 ? w / (data.length - 1) : w;
+                    data.forEach((v, i) => {
+                        const x = i * step;
+                        const y = h - (v / 100) * h;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    });
+
+                    ctx.stroke();
+                }, [data]);
+
+                return <canvas ref={ref} width={800} height={250} style={{ width: '100%', height: '250px' }} />;
+            };
+
+            return (
+                <div className="space-y-6">
+                    <h2 className="text-2xl font-bold border-b border-gray-800 pb-2">Sensor Trend Analysis</h2>
+                    <div className="grid grid-cols-1 gap-6">
+                        {machines.map(m => (
+                            <div key={m.id} className="glass-panel p-6" style={{ background: 'rgba(20, 20, 20, 0.7)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '16px' }}>
+                                <div className="flex justify-between mb-4 items-center">
+                                    <div>
+                                        <h3 className="font-bold text-lg">{m.id}</h3>
+                                        <p className="text-xs text-gray-500">{MACHINE_ARCHETYPES[m.id].name}</p>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                        <span className="text-gray-500 text-sm">Current Risk:</span>
+                                        <span className={`text-2xl font-mono font-bold ${m.riskScore > 70 ? 'text-red-400' : 'text-white'}`}>
+                                            {m.riskScore}%
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="bg-black/30 rounded-xl p-4 border border-white/5">
+                                    <LargeChart data={m.history} />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const MaintenancePage = ({ orders, closeOrder, closingOrderId }) => (
+            <div className="space-y-6">
+                <div className="glass-panel p-6" style={{ background: 'rgba(20, 20, 20, 0.7)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '16px' }}>
+                    <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-3">
+                        <div>
+                            <h2 className="text-2xl font-bold">Maintenance Orders</h2>
+                            <p className="text-sm text-gray-400">Posted maintenance orders generated from predicted failures</p>
+                        </div>
+                        <div className="text-sm text-gray-400">
+                            Total: <span className="text-white font-semibold">{orders.length}</span>
+                        </div>
+                    </div>
+
+                    {orders.length === 0 ? (
+                        <div className="text-gray-500 text-sm py-8 text-center">
+                            No maintenance orders posted yet.
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {orders.slice().reverse().map((order) => (
+                                <div key={order.id} className="rounded-xl border border-cyan-500/10 bg-white/[0.03] p-4 hover:bg-white/[0.05] transition-colors">
+                                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-3 flex-wrap">
+                                                <span className="font-mono text-cyan-400 font-bold">{order.id}</span>
+
+                                                <span className={`px-2 py-1 rounded-md text-xs font-semibold ${
+                                                    (order.priority || '').toLowerCase() === 'critical'
+                                                        ? 'bg-red-500/15 text-red-400'
+                                                        : (order.priority || '').toLowerCase() === 'high'
+                                                        ? 'bg-orange-500/15 text-orange-300'
+                                                        : (order.priority || '').toLowerCase() === 'medium'
+                                                        ? 'bg-yellow-500/15 text-yellow-300'
+                                                        : 'bg-blue-500/15 text-blue-300'
+                                                }`}>
+                                                    {order.priority || 'medium'}
+                                                </span>
+
+                                                <span className={`px-2 py-1 rounded-md text-xs font-semibold ${
+                                                    (order.status || 'open').toLowerCase() === 'closed'
+                                                        ? 'bg-green-500/15 text-green-400'
+                                                        : 'bg-yellow-500/10 text-yellow-300'
+                                                }`}>
+                                                    {order.status || 'open'}
+                                                </span>
+
+                                                {order.priority_score !== undefined && (
+                                                    <span className="px-2 py-1 rounded-md text-xs font-semibold bg-purple-500/10 text-purple-300">
+                                                        Score: {order.priority_score}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <div className="mt-3 text-sm text-gray-300">
+                                                <span className="text-gray-500">Machine:</span>{' '}
+                                                <span className="font-mono text-white">{order.machine_id}</span>
+                                            </div>
+
+                                            <div className="mt-1 text-sm text-gray-300">
+                                                <span className="text-gray-500">Predicted failure:</span>{' '}
+                                                <span className="text-white font-medium">{order.failure}</span>
+                                            </div>
+
+                                            <div className="mt-1 text-sm text-gray-300">
+                                                <span className="text-gray-500">Created by:</span>{' '}
+                                                <span>{order.created_by || 'system'}</span>
+                                            </div>
+
+                                            <div className="mt-1 text-sm text-gray-300">
+                                                <span className="text-gray-500">Notes:</span>{' '}
+                                                <span>{order.notes || '—'}</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex flex-col items-end gap-3">
+                                            <div className="text-xs text-gray-500 font-mono whitespace-nowrap">
+                                                {order.created_at
+                                                    ? (typeof order.created_at === 'number'
+                                                        ? new Date(order.created_at * 1000).toLocaleString()
+                                                        : new Date(order.created_at).toLocaleString())
+                                                    : '—'}
+                                            </div>
+
+                                            {(order.status || 'open').toLowerCase() !== 'closed' && (
+                                                <button
+                                                    onClick={() => closeOrder(order.id)}
+                                                    disabled={closingOrderId === order.id}
+                                                    className="px-4 py-2 rounded-lg text-sm font-semibold bg-red-500/90 hover:bg-red-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    {closingOrderId === order.id ? 'Closing...' : 'Close Ticket'}
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+
+        const SchedulePage = ({ schedules }) => (
+            <div className="space-y-6">
+                <div className="glass-panel p-6" style={{ background: 'rgba(20, 20, 20, 0.7)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '16px' }}>
+                    <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-3">
+                        <div>
+                            <h2 className="text-2xl font-bold">Maintenance Schedule</h2>
+                            <p className="text-sm text-gray-400">Scheduled follow-up generated from maintenance orders</p>
+                        </div>
+                        <div className="text-sm text-gray-400">
+                            Total: <span className="text-white font-semibold">{schedules.length}</span>
+                        </div>
+                    </div>
+
+                    {schedules.length === 0 ? (
+                        <div className="text-gray-500 text-sm py-8 text-center">
+                            No schedules created yet.
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {schedules.slice().reverse().map((schedule) => (
+                                <div key={schedule.id} className="rounded-xl border border-purple-500/10 bg-white/[0.03] p-4 hover:bg-white/[0.05] transition-colors">
+                                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                                        <div>
+                                            <div className="flex items-center gap-3 flex-wrap">
+                                                <span className="font-mono text-purple-400 font-bold">{schedule.id}</span>
+                                                <span className="px-2 py-1 rounded-md text-xs font-semibold bg-cyan-500/10 text-cyan-300">
+                                                    {schedule.schedule_status || 'scheduled'}
+                                                </span>
+                                            </div>
+
+                                            <div className="mt-3 text-sm text-gray-300">
+                                                <span className="text-gray-500">Machine:</span>{' '}
+                                                <span className="font-mono text-white">{schedule.machine_id}</span>
+                                            </div>
+
+                                            <div className="mt-1 text-sm text-gray-300">
+                                                <span className="text-gray-500">Failure:</span>{' '}
+                                                <span className="text-white">{schedule.failure}</span>
+                                            </div>
+
+                                            <div className="mt-1 text-sm text-gray-300">
+                                                <span className="text-gray-500">Assigned to:</span>{' '}
+                                                <span>{schedule.assigned_to || 'auto-system'}</span>
+                                            </div>
+
+                                            <div className="mt-1 text-sm text-gray-300">
+                                                <span className="text-gray-500">Start:</span>{' '}
+                                                <span>{schedule.scheduled_start ? new Date(schedule.scheduled_start * 1000).toLocaleString() : '—'}</span>
+                                            </div>
+
+                                            <div className="mt-1 text-sm text-gray-300">
+                                                <span className="text-gray-500">End:</span>{' '}
+                                                <span>{schedule.scheduled_end ? new Date(schedule.scheduled_end * 1000).toLocaleString() : '—'}</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="text-xs text-gray-500 font-mono whitespace-nowrap">
+                                            {schedule.created_at ? new Date(schedule.created_at).toLocaleString() : '—'}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+
+        const HistoryPage = ({ history }) => (
+            <div className="space-y-6">
+                <div className="glass-panel p-6">
+                    <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-3">
+                        <div>
+                            <h2 className="text-2xl font-bold">Maintenance History</h2>
+                            <p className="text-sm text-gray-400">Closed maintenance tickets archived from active work orders</p>
+                        </div>
+                        <div className="text-sm text-gray-400">
+                            Total: <span className="text-white font-semibold">{history.length}</span>
+                        </div>
+                    </div>
+
+                    {history.length === 0 ? (
+                        <div className="text-gray-500 text-sm py-8 text-center">
+                            No completed orders yet.
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {history.slice().reverse().map(order => (
+                                <div key={order.id} className="border border-green-500/20 bg-green-500/5 p-4 rounded-xl">
+                                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                                        <div>
+                                            <div className="flex items-center gap-3 flex-wrap">
+                                                <div className="font-mono text-green-400 font-bold">{order.id}</div>
+                                                <span className="px-2 py-1 rounded-md text-xs font-semibold bg-green-500/15 text-green-300">
+                                                    CLOSED
+                                                </span>
+                                                {order.priority && (
+                                                    <span className="px-2 py-1 rounded-md text-xs font-semibold bg-purple-500/10 text-purple-300">
+                                                        {order.priority}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <div className="mt-3">Machine: <span className="font-mono text-white">{order.machine_id}</span></div>
+                                            <div className="mt-1">Failure: <span className="text-white">{order.failure}</span></div>
+                                            <div className="mt-1">Notes: <span className="text-gray-300">{order.notes || '—'}</span></div>
+                                            <div className="mt-1">
+                                                Closed: {order.closed_at
+                                                    ? new Date(order.closed_at * 1000).toLocaleString()
+                                                    : '—'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+
+        const DocumentationPage = () => (
+            <div className="glass-panel p-8" style={{ background: 'rgba(20, 20, 20, 0.7)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '16px' }}>
+                <h1 className="text-4xl font-bold mb-2 text-cyan-400">AMDA Architecture</h1>
+                <p className="text-gray-400 mb-10 text-lg">Flask + Socket.IO + Kafka + MongoDB</p>
+                <div className="space-y-4 text-sm text-gray-300">
+                    <p><strong className="text-white">Socket endpoint:</strong> {SOCKET_URL}</p>
+                    <p><strong className="text-white">Events consumed:</strong> snapshot, machine_update, alert, maintenance_order, maintenance_schedule, maintenance_order_update, maintenance_order_removed, maintenance_history</p>
+                    <p><strong className="text-white">Persistence:</strong> MongoDB stores active maintenance orders, schedules, and history.</p>
+                    <p><strong className="text-white">Streaming:</strong> Kafka publishes maintenance orders and schedules.</p>
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            const [activePage, setActivePage] = useState('Dashboard');
+            const [machines, setMachines] = useState(getInitialMachines());
+            const [connected, setConnected] = useState(false);
+            const [alerts, setAlerts] = useState([]);
+            const [maintenanceOrders, setMaintenanceOrders] = useState([]);
+            const [schedules, setSchedules] = useState([]);
+            const [history, setHistory] = useState([]);
+            const [closingOrderId, setClosingOrderId] = useState(null);
+
+            const closeOrder = async (id) => {
+                try {
+                    setClosingOrderId(id);
+
+                    const res = await fetch(`${SOCKET_URL}/maintenance-orders/close`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ id }),
+                    });
+
+                    const data = await res.json();
+
+                    if (!res.ok || !data.ok) {
+                        console.error("Failed to close order:", data);
+                    }
+                } catch (error) {
+                    console.error("Close order error:", error);
+                } finally {
+                    setClosingOrderId(null);
+                }
+            };
+
+            useEffect(() => {
+                const socket = io(SOCKET_URL, {
+                    transports: ['websocket', 'polling'],
+                    reconnection: true,
+                });
+
+                socket.on('connect', () => {
+                    setConnected(true);
+                    ['CNC_01', 'CNC_02', 'PUMP_03', 'CONVEYOR_04'].forEach((machineId) => {
+                        socket.emit('subscribe', { machine_id: machineId });
+                    });
+                });
+
+                socket.on('disconnect', () => setConnected(false));
+
+                socket.on('snapshot', (data) => {
+                    if (Array.isArray(data.machines)) {
+                        setMachines(prev => data.machines.reduce((acc, payload) => applyServerPayload(acc, payload), prev));
+                    }
+                    if (Array.isArray(data.alerts)) {
+                        setAlerts(data.alerts.slice(-20));
+                    }
+                    if (Array.isArray(data.maintenance_orders)) {
+                        setMaintenanceOrders(data.maintenance_orders.slice(-50));
+                    }
+                    if (Array.isArray(data.maintenance_schedules)) {
+                        setSchedules(data.maintenance_schedules.slice(-50));
+                    }
+                    if (Array.isArray(data.maintenance_history)) {
+                        setHistory(data.maintenance_history.slice(-50));
+                    }
+                });
+
+                socket.on('machine_update', (payload) => {
+                    setMachines(prev => applyServerPayload(prev, payload));
+                });
+
+                socket.on('alert', (alert) => {
+                    setAlerts(prev => [...prev.slice(-19), alert]);
+                });
+
+                socket.on('maintenance_order', (order) => {
+                    setMaintenanceOrders(prev => {
+                        const exists = prev.some(item => item.id === order.id);
+                        if (exists) return prev;
+                        return [...prev.slice(-49), order];
+                    });
+                });
+
+                socket.on('maintenance_order_update', (updatedOrder) => {
+                    setMaintenanceOrders(prev =>
+                        prev.map(order =>
+                            order.id === updatedOrder.id ? updatedOrder : order
+                        )
+                    );
+                });
+
+                socket.on('maintenance_order_removed', ({ id }) => {
+                    setMaintenanceOrders(prev => prev.filter(order => order.id !== id));
+                });
+
+                socket.on('maintenance_history', (order) => {
+                    setHistory(prev => {
+                        const exists = prev.some(item => item.id === order.id);
+                        if (exists) return prev;
+                        return [...prev.slice(-49), order];
+                    });
+                });
+
+                socket.on('maintenance_schedule', (schedule) => {
+                    setSchedules(prev => {
+                        const exists = prev.some(item => item.id === schedule.id);
+                        if (exists) return prev;
+                        return [...prev.slice(-49), schedule];
+                    });
+                });
+                socket.on('maintenance_schedule_removed', ({ id }) => {
+    setSchedules(prev => prev.filter(schedule => schedule.id !== id));
+});
+
+                fetch(`${SOCKET_URL}/maintenance-orders`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (Array.isArray(data.orders)) {
+                            setMaintenanceOrders(data.orders.slice(-50));
+                        } else if (Array.isArray(data)) {
+                            setMaintenanceOrders(data.slice(-50));
+                        }
+                    })
+                    .catch(() => {});
+
+                fetch(`${SOCKET_URL}/maintenance-schedules`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (Array.isArray(data.schedules)) {
+                            setSchedules(data.schedules.slice(-50));
+                        }
+                    })
+                    .catch(() => {});
+
+                fetch(`${SOCKET_URL}/maintenance-history`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (Array.isArray(data.history)) {
+                            setHistory(data.history.slice(-50));
+                        }
+                    })
+                    .catch(() => {});
+
+                return () => socket.disconnect();
+            }, []);
+
+            return (
+                <div className="min-h-screen">
+                    <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0 bg-[radial-gradient(circle_at_10%_10%,_rgba(0,240,255,0.03),_transparent_50%)]"></div>
+                    <Navbar activePage={activePage} setActivePage={setActivePage} connected={connected} />
+                    <div className="relative z-10 max-w-screen-2xl mx-auto p-6">
+                        {activePage === 'Dashboard' && <Dashboard machines={machines} />}
+                        {activePage === 'Analysis' && <AnalysisPage machines={machines} />}
+                        {activePage === 'Maintenance' && <MaintenancePage orders={maintenanceOrders} closeOrder={closeOrder} closingOrderId={closingOrderId} />}
+                        {activePage === 'Schedules' && <SchedulePage schedules={schedules} />}
+                        {activePage === 'History' && <HistoryPage history={history} />}
+                        {activePage === 'Docs' && <DocumentationPage />}
+
+                        {alerts.length > 0 && (
+                            <div className="glass-panel p-4 mt-6" style={{ background: 'rgba(20, 20, 20, 0.7)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '16px' }}>
+                                <h3 className="text-lg font-bold mb-3">Recent Alerts</h3>
+                                <div className="space-y-2 text-sm">
+                                    {alerts.slice().reverse().map((a) => (
+                                        <div key={a.id} className="border border-red-500/20 bg-red-500/5 rounded-lg p-3">
+                                            <div className="font-mono text-red-400">{a.machine_id}</div>
+                                            <div>{a.reason}</div>
+                                            <div className="text-xs text-gray-500">{new Date(a.triggered_at).toLocaleString()}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

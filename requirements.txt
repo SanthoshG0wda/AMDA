@@ -1,0 +1,11 @@
+eventlet
+python-dotenv
+gunicorn<26
+flask
+flask-cors
+flask-socketio
+joblib
+pandas
+pymongo
+requests
+scikit-learn

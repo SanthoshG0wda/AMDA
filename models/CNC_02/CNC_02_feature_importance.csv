@@ -1,0 +1,7 @@
+feature,importance
+vibration_mm_s,0.35650021984265556
+coolant_temperature_C,0.24823687122351112
+spindle_current_percent,0.19331952637371133
+acoustic_dba,0.11017136046398351
+spindle_temperature_C,0.08309421869394609
+lubrication_pressure_bar,0.008677803402192347

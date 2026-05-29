@@ -1,0 +1,18 @@
+case,expected,vibration_mm_s,motor_current_A,bearing_temperature_C,suction_pressure_bar,discharge_pressure_bar,flow_rate_lpm,predicted,confidence,correct,top_1,top_1_confidence,top_2,top_2_confidence
+Healthy baseline,none,1.25,12.0,54.0,1.1,4.2,220.0,none,0.9843,True,none,0.9843,bearing_failure,0.0114
+Healthy high load,none,1.55,13.8,58.0,1.02,4.45,235.0,none,0.9729,True,none,0.9729,bearing_failure,0.0249
+Bearing failure early,bearing_failure,2.25,14.2,67.0,1.05,4.1,210.0,bearing_failure,0.9586,True,bearing_failure,0.9586,none,0.023
+Bearing failure advanced,bearing_failure,3.35,15.8,79.0,1.0,4.0,200.0,bearing_failure,0.9979,True,bearing_failure,0.9979,seal_leakage,0.0011
+Cavitation,cavitation,3.2,13.8,61.0,0.55,2.8,145.0,cavitation,0.9888,True,cavitation,0.9888,impeller_damage,0.0053
+Severe cavitation,cavitation,4.6,14.8,64.0,0.28,2.3,105.0,cavitation,0.9913,True,cavitation,0.9913,impeller_damage,0.0025
+Seal leakage,seal_leakage,1.75,13.2,57.0,0.98,3.1,175.0,seal_leakage,0.9058,True,seal_leakage,0.9058,impeller_damage,0.0483
+Severe seal leakage,seal_leakage,2.1,14.5,61.0,0.92,2.55,145.0,seal_leakage,0.6659,True,seal_leakage,0.6659,impeller_damage,0.2605
+Impeller damage,impeller_damage,2.45,15.6,64.0,0.9,2.35,125.0,impeller_damage,0.7709,True,impeller_damage,0.7709,seal_leakage,0.1521
+Severe impeller damage,impeller_damage,3.05,17.2,68.0,0.82,1.75,95.0,impeller_damage,0.9202,True,impeller_damage,0.9202,cavitation,0.0297
+Clogging,clogging,2.25,18.5,68.0,0.72,5.6,105.0,clogging,0.9765,True,clogging,0.9765,impeller_damage,0.011
+Severe clogging,clogging,2.75,22.0,74.0,0.55,6.45,70.0,clogging,0.9865,True,clogging,0.9865,seal_leakage,0.0104
+Dry run,dry_run,2.75,10.5,78.0,0.2,0.9,35.0,dry_run,0.9901,True,dry_run,0.9901,bearing_failure,0.0032
+Severe dry run,dry_run,4.0,9.0,90.0,0.05,0.3,5.0,dry_run,0.9517,True,dry_run,0.9517,impeller_damage,0.0315
+Borderline seal leakage vs impeller damage,impeller_damage,2.2,15.0,62.0,0.9,2.55,135.0,impeller_damage,0.5341,True,impeller_damage,0.5341,seal_leakage,0.3631
+Borderline cavitation vs impeller damage,cavitation,3.0,14.5,62.0,0.65,2.7,130.0,cavitation,0.8551,True,cavitation,0.8551,impeller_damage,0.1271
+Borderline bearing failure vs healthy,bearing_failure,1.95,13.5,63.0,1.05,4.05,215.0,bearing_failure,0.6132,True,bearing_failure,0.6132,none,0.3149
