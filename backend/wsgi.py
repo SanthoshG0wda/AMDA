@@ -1,3 +1,3 @@
-from server import socketio, app
+from server import socketio
 
-application = socketio.app
+application = socketio

@@ -767,8 +767,10 @@ const App = () => {
 
     useEffect(() => {
         const socket = io(SOCKET_URL, {
-            transports: ['websocket', 'polling'],
+            transports: ['polling', 'websocket'],
             reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000,
         });
 
         socket.on('connect', () => {

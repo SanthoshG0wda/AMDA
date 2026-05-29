@@ -827,4 +827,4 @@ else:
 start_workers()
 
 if __name__ == '__main__':
-    socketio.run(app, host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG, use_reloader=False)
+    socketio.run(app,  port=FLASK_PORT, debug=FLASK_DEBUG, use_reloader=False)
